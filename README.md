@@ -34,4 +34,19 @@ Create a .env file under src directory and add the following inside it.
     DB_CONNECTION_URI ="postgres://[YourUserName]:[YourPassword]@[YourHostname]:5432/[YourDatabaseName]"
 ```
 Replace the placeholders with your respective details 
+
+## Deployed application URL
+
+URL : https://contact-linking-app.onrender.com/
+
+Exposed Endpoint: /identify
+
+Request Body Data : {
+	"email"?: string,
+	"phoneNumber"?: number
+}
+
+## Contact info
+
+Please reach out at gauravmishra.190699@gmail.com for any suggestions, issues etc.
     
