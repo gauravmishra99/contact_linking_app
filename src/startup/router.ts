@@ -1,14 +1,14 @@
-import { Express, Request, Response, response } from "express";
+import { Express, Request, Response} from "express";
 import { Contact } from "../interfaces/contact";
 import pool from "../db/db_init";
 import { PoolClient, QueryResult } from "pg";
 import { contactReponse } from "../interfaces/contactResponse";
+import updateSecondaryRecords from "../utils/updateSecondaryRecords";
+import insertIntoDB from "../utils/insertIntoDB";
+import generateResponse from "../utils/generateResponse";
+
 
 const routerSetup = (app: Express) => {
-    app.get("/", async (req: Request, res: Response) => {
-        res.send("Hello Express APIvantage!");
-    });
-
     app.post("/identify", async (req: Request, res: Response) => {
         try {
             const reqData = req.body;
@@ -16,7 +16,7 @@ const routerSetup = (app: Express) => {
             const phoneNumber: string = reqData.phoneNumber;
             const client: PoolClient = await pool.connect();
 
-            const sql = `SELECT * FROM contact where email = '${email}' OR phonenumber = '${phoneNumber}'`;
+            const sql = `SELECT * FROM contact where email = '${email}' OR phonenumber = '${phoneNumber}' order by createdat`;
             const result: QueryResult<any> = await client.query(sql);
             const rows: Array<any> = result.rows;
 
@@ -44,7 +44,7 @@ const routerSetup = (app: Express) => {
             if (countEmail == 0 && countPhoneNumber == 0) {
                 // create new entry
                 const time = new Date().toISOString();
-                const data: Contact = {
+                const data = {
                     email,
                     phonenumber: phoneNumber,
                     linkprecedence: "primary",
@@ -53,7 +53,7 @@ const routerSetup = (app: Express) => {
                     updatedat: time,
                 };
 
-                const insertedData: Array<Contact> = await InsertIntoDB(
+                const insertedData: Array<Contact> = await insertIntoDB(
                     client,
                     data
                 );
@@ -62,7 +62,7 @@ const routerSetup = (app: Express) => {
             } else if (countEmail == 0 || countPhoneNumber == 0) {
                 // check from request body if phoneNumber or email is new, if yes, create new record as secondary
                 const time = new Date().toISOString();
-                const data: Contact = {
+                const data = {
                     email,
                     phonenumber: phoneNumber,
                     linkprecedence: "secondary",
@@ -71,14 +71,43 @@ const routerSetup = (app: Express) => {
                     updatedat: time,
                 };
 
-                const insertedData: Array<any> = await InsertIntoDB(
+                const insertedData: Array<any> = await insertIntoDB(
                     client,
                     data
                 );
                 rows.push(insertedData[0]);
                 await generateResponse(rows, contactResponse);
+            } else {
+                // check if more than one primary records exist then except the oldest record,
+                // mark all primary records as "secondary"
+                const secondaryRecords: Array<Contact> = [],
+                    primaryRecords: Array<Contact> = [];
+
+                rows.forEach((row: Contact) => {
+                    row.linkprecedence == "secondary"
+                        ? secondaryRecords.push(row)
+                        : primaryRecords.push(row);
+                });
+
+                // modifying all primary records except first to secondary
+                const rowID: Array<number> = [];
+                for (let i = 1; i < primaryRecords.length; i++) {
+                    const row: Contact = primaryRecords[i];
+                    rowID.push(row.id);
+                    row.linkprecedence = "secondary";
+                    secondaryRecords.push(row);
+                }
+
+                // if more than one primary records exist, then the db will be updated
+                if (primaryRecords.length > 1)
+                    await updateSecondaryRecords(
+                        client,
+                        rowID,
+                        primaryRecords[0].id
+                    );
+                const data = [primaryRecords[0], ...secondaryRecords];
+                await generateResponse(data, contactResponse);
             }
-            // check if more than one primary records exist, except the oldest record, mark all primary records as "secondary"
 
             client.release();
             res.send(contactResponse);
@@ -87,71 +116,6 @@ const routerSetup = (app: Express) => {
             res.status(400).send(error);
         }
     });
-};
-// handle insert into DataBase
-async function InsertIntoDB(client: PoolClient, data: Contact) {
-    const sql = `Insert into contact(phonenumber, email, linkedid, linkprecedence, createdat, updatedat) VALUES($1, $2, $3, $4, $5, $6) RETURNING *`;
-    const values = [
-        data.phonenumber,
-        data.email,
-        data.linkedid,
-        data.linkprecedence,
-        data.createdat,
-        data.updatedat,
-    ];
-
-    const res: QueryResult<any> = await client.query(sql, values);
-    const rows: Array<Contact> = res.rows;
-    return rows;
 }
-//generate response
-async function generateResponse(data: any, contactResponse: contactReponse) {
-    let primaryID;
-    const secondaryContactIds = [];
-    const emailSet: Set<string> = new Set(),
-        phoneNumberSet: Set<string> = new Set();
 
-    let primaryEmail = "",
-        primaryPhoneNumber = "";
-
-    for (let i = 0; i < data.length; i++) {
-        const datum = data[i];
-        emailSet.add(datum.email);
-        phoneNumberSet.add(datum.phonenumber);
-
-        if (datum.linkprecedence == "primary") {
-            primaryID = datum.id;
-            primaryEmail = datum.email;
-            primaryPhoneNumber = datum.phonenumber;
-        } else {
-            secondaryContactIds.push(datum.id);
-        }
-    }
-
-    const emailArr = Array.from(emailSet);
-    const phoneArr = Array.from(phoneNumberSet);
-
-    for (let i = 0; i < emailArr.length; i++) {
-        if (emailArr[i] == primaryEmail) {
-            const temp = emailArr[i];
-            emailArr[i] = emailArr[0];
-            emailArr[0] = temp;
-            break;
-        }
-    }
-
-    for (let i = 0; i < phoneArr.length; i++) {
-        if (phoneArr[i] == primaryPhoneNumber) {
-            const temp = phoneArr[i];
-            phoneArr[i] = phoneArr[0];
-            phoneArr[0] = temp;
-            break;
-        }
-    }
-
-    contactResponse.primaryContatctId = primaryID;
-    contactResponse.phoneNumbers = phoneArr;
-    contactResponse.emails = emailArr;
-    contactResponse.secondaryContactIds = secondaryContactIds;
-}
 export default routerSetup;
