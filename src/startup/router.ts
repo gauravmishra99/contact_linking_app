@@ -1,7 +1,7 @@
 import { Express, Request, Response } from "express";
 import { Contact } from "../interfaces/contact";
 import pool from "../db/db_init";
-import { PoolClient, QueryResult } from "pg";
+import { PoolClient } from "pg";
 import { contactReponse } from "../interfaces/contactResponse";
 import updateSecondaryRecords from "../utils/updateSecondaryRecords";
 import insertIntoDB from "../utils/insertIntoDB";
@@ -15,6 +15,11 @@ const routerSetup = (app: Express) => {
             const email: string = reqData.email;
             const phoneNumber: string = reqData.phoneNumber;
             const client: PoolClient = await pool.connect();
+
+            if(email == null && phoneNumber == null) {
+                res.status(400).send({"message" : "Please send an email or phone number"})
+                return;
+            }
 
             // fetching all primary and secondary rows related to email and phoneNumber
             const rows = await fetchRows(client, email, phoneNumber);
